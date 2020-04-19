@@ -34,7 +34,8 @@ type exp =
 module Ctxt = struct
   type t = (id * exp) list
   let lookup ctxt ident = List.assoc ident ctxt
-  let store ctxt id exp = (id, exp) :: ctxt 
+  let add ctxt id exp = (id, exp) :: ctxt 
+  let empty = []
 end
 
 (* A helper to simplify fractions. *)
@@ -89,9 +90,9 @@ let rec string_of_exp : (exp -> string) = function
   | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f)
 
 (* grad: the symbolic differentiator. *)
-let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp)  = function
+let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
   | Int i -> ~%0L (* d/dx [c] = 0 *)
-  | Var vid -> if vid == dx then Int 1L else Int 0L (* d/dx [x] = 1, d/dx [y] = 0 *) 
+  | Var vid -> if vid = dx then Int 1L else Int 0L (* d/dx [x] = 1, d/dx [y] = 0 *) 
   | Bop (op, f, g) -> 
     begin match op with 
       | Add -> (grad ctxt dx f) ++ (grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
@@ -133,5 +134,10 @@ let map_eval (ctxt : Ctxt.t) = function
   | List exps -> List (List.map (fun x -> Float (eval ctxt x)) exps)
   | _ -> failwith "map_eval: Cannot map to other than lists."
 
-
+let () = 
+  let test1 = ~%2L ** (Var "x") ++ ~%3L in
+  let ctxt1 = (Ctxt.add Ctxt.empty "x" ~%3L) in
+  let ddx_test1 = grad ctxt1 "x" test1 in 
+  Printf.printf "expr := %s\n" @@ string_of_exp test1;
+  Printf.printf "d/dx := %s\n" @@ string_of_exp ddx_test1
 
