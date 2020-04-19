@@ -13,13 +13,8 @@ type bop =
   | Sub
   | Mul 
   | Div
-  | And
-  | Or
-  | Xor
 
 type uop = 
-  | Neg
-  | Not
   | Sqrt
   | Log
   | Exp
@@ -28,9 +23,8 @@ type uop =
   | Tan
 
 type exp =
-  | Int of int64 
+  | Int of int64
   | Float of float 
-  | Bool of bool 
   | Var of id
   | List of exp list
   | Bop of bop * exp * exp 
@@ -39,24 +33,69 @@ type exp =
 (* A context to store the variables. *)
 module Ctxt = struct
   type t = (id * exp) list
-  let lookup ctxt ident = List.assoc ident ctxt 
+  let lookup ctxt ident = List.assoc ident ctxt
+  let store ctxt id exp = (id, exp) :: ctxt 
 end
 
+(* A helper to simplify fractions. *)
+let simplify_frac = 
+  let rec gcd u v = if v = 0L then u else gcd v (Int64.rem u v) in 
+  function 
+  | Bop (Div, Int u, Int v) -> let b = gcd u v in 
+    Bop (Div, Int (Int64.div u b), Int (Int64.div v b)) 
+  | _ -> failwith "simplify_frac: Cannot simplify complicated fractions or non-fractions!"
+
+(* A helper to make constants. *)
+let ( ~% ) c = Int c
+
+(* A helper to make fractions. *)
+let ( // ) top btm = (Bop (Div, top, btm))
+
+(* A helper to define addition expressions. *)
+let ( ++ ) a b = (Bop (Add, a, b))
+
+(* A helper to define multiplication expressions. *)
+let ( ** ) a b = (Bop (Mul, a, b))
+
 (* grad: the symbolic differentiator. *)
-let grad (ctxt : Ctxt.t) (dx : id) : exp = function
-  | Int i -> Int 0 (* d/dx [c] = 0 *)
+let rec grad (ctxt : Ctxt.t) (dx : id) : exp = function
+  | Int i -> ~%0L (* d/dx [c] = 0 *)
   | Var vid -> if vid == dx then Int 1 else Int 0 (* d/dx [x] = 1, d/dx [y] = 0 *) 
   | Bop (op, f, g) -> 
     begin match op with 
-      | Add -> Bop (Add,  grad ctxt dx f, grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
-      | Sub -> Bop (Sub,  grad ctxt dx f, grad ctxt dx g) (* d/dx[f - g] = d/dx[f] = d/dx[g] *)
-      | Mul -> Bop (Add,  Bop (Mul, grad ctxt dx f, g), Bop (Mul, f, grad ctxt dx g)) (* d/dx (f * g) = (d/dx f) * g + f * (d/dx g) *)
-      | Div -> Bop (Div, Bop (Sub, Bop (Mul, g, grad ctxt dx f), Bop (Mul, f, grad ctxt dx g)),
-          Bop (Mul, g, g)) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
-      | _ -> failwith "grad: Invalid binary operator"
+      | Add -> (grad ctxt dx f) ++ (grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
+      | Sub -> (grad ctxt dx f) -- (grad ctxt dx g) (* d/dx[f - g] = d/dx[f] = d/dx[g] *)
+      | Mul -> ((grad ctxt dx f) ** g) ++ (f ** (grad ctxt dx g)) (* d/dx (f * g) = (d/dx f) * g + f * (d/dx g) *)
+      | Div -> ((g ** grad ctxt dx f) -- (f ** grad ctxt dx g)) // (g ** g) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
     end
   | Uop (op, f) -> 
     begin match op with 
-      | Sqrt -> Bop (Mul, Int ())
+      | Sqrt -> (~%1L // ~%2L) ** (grad ctxt dx f) // (Uop (Sqrt, f)) (* d/dx[sqrt(f)] = 1/2 * d/dx[f] / sqrt[f] *)
+      | Log -> (grad ctxt dx f) // f (* d/dx[log(f)] = 1/f * d/dx[f] *)
+      | Exp -> (Uop (Exp, f)) ** (grad ctxt dx f) (* d/dx[exp(f)] = exp(f) * d/dx[f] *)
+      | Sin -> (Uop (Cos, f)) ** (grad ctxt dx f) (* d/dx[sin(f)] = cos(f) * d/dx[f] *)
+      | Cos -> (~%0L -- (Uop (Sin, f))) ** (grad ctxt dx f) (* d/dx[cos(f)] = -sin(f) * d/dx[f] *) 
+      | Tan -> (~%1L ++ ((Uop (Tan, f)) ** (Uop (Tan, f)))) ** grad ctxt dx f (* d/dx[tan(f)] = (1 + tan(f)*tan(f)) * d/dx[f] *)
     end
   | _ -> failwith "grad: Invalid type of expressions"
+
+(* evaluates an expression. *)
+let eval (ctxt : Ctxt.t) = function 
+  | Int i -> Int64.float_of_bits i
+  | Var vid -> try eval ctxt @@ Ctxt.lookup ctxt vid with Not_found -> failwith @@ "eval: Cannot evaluate an expression with unknown variable" ^ vid
+  | Bop (op, f, g) ->
+    (match op with 
+     | Add -> Float.add | Sub -> Float.sub
+     | Mul -> Float.mul | Div -> Float.div) (eval ctxt f) (eval ctxt g) 
+  | Uop (op, f) -> 
+    (match op with 
+     | Sqrt -> sqrt | Log -> log | Exp -> exp
+     | Sin -> sin   | Cos -> cos | Tan -> tan) f
+  | _ -> failwith "eval: unsupported type of expression."
+
+(* Applies the evaluator to each expression element on lists. *)
+let map_eval (ctxt : Ctxt.t) = function
+  | List exps -> List (List.map (fun x -> Float (eval ctxt x)) exps)
+  | _ -> failwith "map_eval: Cannot map to other than lists."
+
+
