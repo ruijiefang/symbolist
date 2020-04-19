@@ -7,13 +7,14 @@ open Printf
 (* A variable name instance *)
 type id = string
 
-(* A symbolist expression. *)
+(* An expression type. *)
 type bop =
   | Add 
   | Sub
   | Mul 
   | Div
 
+(* Unary operators. *)
 type uop = 
   | Sqrt
   | Log
@@ -22,6 +23,7 @@ type uop =
   | Cos
   | Tan
 
+(* Binary operators. *)
 type exp =
   | Int of int64
   | Float of float 
@@ -29,6 +31,18 @@ type exp =
   | List of exp list
   | Bop of bop * exp * exp 
   | Uop of uop * exp 
+
+(* A token type. *)
+type terminal = 
+  | IntNode of int64
+  | FloatNode of float
+  | VarNode of string
+  | UnaryOp of uop 
+  | BinaryOp of bop
+  | DeclOp
+  | ListOp
+  | LParOp
+  | RParOp
 
 (* A context to store the variables. *)
 module Ctxt = struct
@@ -134,6 +148,56 @@ let map_eval (ctxt : Ctxt.t) = function
   | List exps -> List (List.map (fun x -> Float (eval ctxt x)) exps)
   | _ -> failwith "map_eval: Cannot map to other than lists."
 
+(* Parsing. Grammar for S-expressions:
+ * S -> ( t S S ) *)
+(* a tokenizer. *)
+
+type parse_state = 
+  | LeftParen
+  | RightParen
+  | Term
+
+type ast = 
+  | Node of terminal * ast option * ast option
+
+let of_string = function
+  | "+" -> BinaryOp Add
+  | "-" -> BinaryOp Sub
+  | "*" -> BinaryOp Mul
+  | "/" -> BinaryOp Div
+  | "sqrt" -> UnaryOp Sqrt
+  | "log" -> UnaryOp Log
+  | "sin" -> UnaryOp Sin
+  | "cos" -> UnaryOp Cos
+  | "tan" -> UnaryOp Tan
+  | "Var" -> DeclOp
+  | "L"   -> ListOp
+  | "("   -> LParOp
+  | ")"   -> RParOp 
+  | s -> 
+    begin try
+        let x = Int64.of_string s in IntNode x
+      with Failure _ -> 
+        begin try 
+            let y = Float.of_string s in FloatNode y
+          with Failure _ -> VarNode s
+        end
+    end
+
+let tokenize s = Str.split (Str.regexp "[ \t]+") s
+
+let rec parse (l : string list) : ast option = 
+  begin try
+    let curr = string_of   in 
+    match s with 
+    | LeftParen -> 
+      begin match curr with 
+        | "" -> 
+          begin match parse i Term with 
+            | Some term -> Node (
+            | None -> failwith "parse error: No terminal after left paren" 
+          end
+  with End_of_file -> None
 let () = 
   let test1 = ~%2L ** (Var "x") ++ ~%3L in
   let ctxt1 = (Ctxt.add Ctxt.empty "x" ~%3L) in
