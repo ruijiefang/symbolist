@@ -38,6 +38,9 @@ module Ctxt = struct
 end
 
 (* A helper to simplify fractions. *)
+(* TODO: Needs more work. Idea: Grab gcd of all coefficients
+ * from polynomial-representation of top, btm recursively and
+ * implement simplification of coefficients in these polynomials.*)
 let simplify_frac = 
   let rec gcd u v = if v = 0L then u else gcd v (Int64.rem u v) in 
   function 
@@ -59,6 +62,31 @@ let ( -- ) a b = (Bop (Sub, a, b))
 
 (* A helper to define multiplication expressions. *)
 let ( ** ) a b = (Bop (Mul, a, b))
+
+(* string of a binary operator. *)
+let string_of_bop = function 
+  | Add -> "+"
+  | Sub -> "-"
+  | Mul -> "*"
+  | Div -> "/"
+
+(* string of unary functions. *)
+let string_of_uop = function
+  | Sqrt -> "√"
+  | Log  -> "lg"
+  | Exp  -> "exp"
+  | Sin  -> "sin"
+  | Cos  -> "cos"
+  | Tan  -> "tan"
+
+(* string of an expression *)
+let rec string_of_exp : (exp -> string) = function 
+  | Int i -> "Int " ^ (Int64.to_string i)
+  | Float f -> "Float" ^ (string_of_float f)
+  | Var id -> "Var " ^ id
+  | List exps -> (List.fold_right (fun exp str -> " (" ^ (string_of_exp exp) ^ ") ") exps "List [") ^ "]"
+  | Bop (op, f, g) -> "(" ^ (string_of_bop op) ^ ", " ^ (string_of_exp f) ^ ", " ^ (string_of_exp g) ^ ")"
+  | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f)
 
 (* grad: the symbolic differentiator. *)
 let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp)  = function
@@ -106,4 +134,4 @@ let map_eval (ctxt : Ctxt.t) = function
   | _ -> failwith "map_eval: Cannot map to other than lists."
 
 
- 
+
