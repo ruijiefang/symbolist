@@ -54,13 +54,16 @@ let ( // ) top btm = (Bop (Div, top, btm))
 (* A helper to define addition expressions. *)
 let ( ++ ) a b = (Bop (Add, a, b))
 
+(* A helper to define subtraction expressions. *)
+let ( -- ) a b = (Bop (Sub, a, b))
+
 (* A helper to define multiplication expressions. *)
 let ( ** ) a b = (Bop (Mul, a, b))
 
 (* grad: the symbolic differentiator. *)
-let rec grad (ctxt : Ctxt.t) (dx : id) : exp = function
+let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp)  = function
   | Int i -> ~%0L (* d/dx [c] = 0 *)
-  | Var vid -> if vid == dx then Int 1 else Int 0 (* d/dx [x] = 1, d/dx [y] = 0 *) 
+  | Var vid -> if vid == dx then Int 1L else Int 0L (* d/dx [x] = 1, d/dx [y] = 0 *) 
   | Bop (op, f, g) -> 
     begin match op with 
       | Add -> (grad ctxt dx f) ++ (grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
@@ -80,18 +83,22 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : exp = function
   | _ -> failwith "grad: Invalid type of expressions"
 
 (* evaluates an expression. *)
-let eval (ctxt : Ctxt.t) = function 
+let rec eval (ctxt : Ctxt.t) : (exp -> float) = function 
   | Int i -> Int64.float_of_bits i
-  | Var vid -> try eval ctxt @@ Ctxt.lookup ctxt vid with Not_found -> failwith @@ "eval: Cannot evaluate an expression with unknown variable" ^ vid
+  | Float f -> f
+  | Var vid -> 
+    begin try eval ctxt (Ctxt.lookup ctxt vid)
+    with Not_found -> failwith ("eval: Cannot evaluate an expression with unknown variable" ^ vid) end
   | Bop (op, f, g) ->
-    (match op with 
+    (begin match op with 
      | Add -> Float.add | Sub -> Float.sub
-     | Mul -> Float.mul | Div -> Float.div) (eval ctxt f) (eval ctxt g) 
+     | Mul -> Float.mul | Div -> Float.div end) (eval ctxt f) (eval ctxt g) 
   | Uop (op, f) -> 
-    (match op with 
+    (begin match op with 
      | Sqrt -> sqrt | Log -> log | Exp -> exp
-     | Sin -> sin   | Cos -> cos | Tan -> tan) f
+     | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
   | _ -> failwith "eval: unsupported type of expression."
+
 
 (* Applies the evaluator to each expression element on lists. *)
 let map_eval (ctxt : Ctxt.t) = function
@@ -99,3 +106,4 @@ let map_eval (ctxt : Ctxt.t) = function
   | _ -> failwith "map_eval: Cannot map to other than lists."
 
 
+ 
