@@ -28,7 +28,6 @@ type exp =
   | Int of int64
   | Float of float 
   | Var of id
-  | List of exp list
   | Bop of bop * exp * exp 
   | Uop of uop * exp 
 
@@ -40,7 +39,6 @@ type terminal =
   | UnaryOp of uop 
   | BinaryOp of bop
   | DeclOp
-  | ListOp
   | LParOp
   | RParOp
 
@@ -99,7 +97,6 @@ let rec string_of_exp : (exp -> string) = function
   | Int i -> "Int " ^ (Int64.to_string i)
   | Float f -> "Float" ^ (string_of_float f)
   | Var id -> "Var " ^ id
-  | List exps -> (List.fold_right (fun exp str -> " (" ^ (string_of_exp exp) ^ ") ") exps "List [") ^ "]"
   | Bop (op, f, g) -> "(" ^ (string_of_bop op) ^ ", " ^ (string_of_exp f) ^ ", " ^ (string_of_exp g) ^ ")"
   | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f)
 
@@ -142,12 +139,6 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
      | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
   | _ -> failwith "eval: unsupported type of expression."
 
-
-(* Applies the evaluator to each expression element on lists. *)
-let map_eval (ctxt : Ctxt.t) = function
-  | List exps -> List (List.map (fun x -> Float (eval ctxt x)) exps)
-  | _ -> failwith "map_eval: Cannot map to other than lists."
-
 (* Parsing. Grammar for S-expressions:
  * S -> ( t S S ) *)
 (* a tokenizer. *)
@@ -171,7 +162,6 @@ let of_string = function
   | "cos" -> UnaryOp Cos
   | "tan" -> UnaryOp Tan
   | "Var" -> DeclOp
-  | "L"   -> ListOp
   | "("   -> LParOp
   | ")"   -> RParOp 
   | s -> 
@@ -186,18 +176,43 @@ let of_string = function
 
 let tokenize s = Str.split (Str.regexp "[ \t]+") s
 
-let rec parse (l : string list) : ast option = 
-  begin try
-    let curr = string_of   in 
-    match s with 
+let rec parse (l : string list) (s : parse_state) : ast option * string list = 
+  match l with 
+  | a :: t -> 
+    begin try
+    let curr = string_of a in 
+    begin match s with 
     | LeftParen -> 
       begin match curr with 
-        | "" -> 
-          begin match parse i Term with 
-            | Some term -> Node (
-            | None -> failwith "parse error: No terminal after left paren" 
+        | LParOp -> 
+          begin match parse t Term with 
+            | Some (t, None, None), nxt ->
+              begin match t with 
+                | BinaryOp _ -> 
+                  let lhs_ast_opt, lhs_nxt = parse nxt LParen in 
+                  let rhs_ast_opt, rhs_nxt = parse lhs_nxt LParen in
+                  let _, _ = parse rhs_nxt RParen in 
+                  Node (t, lhs_ast_opt, rhs_ast_op) 
+                | UnaryOp _ -> 
+                  let lhs_ast_opt, lhs_nxt = parse nxt LParen in 
+                  let _, _ = parse lhs_nxt RParen in 
+                  Node (t, lhs_ast_opt, None)
+                | DeclOp -> 
+              end
+            | Some _, _ | None, _ -> failwith @@ "parse error: No terminal after left paren at " ^ a 
           end
-  with End_of_file -> None
+        | _ -> failwith @@ "parse error: expected left parenthesis but got " ^ a
+      end
+    | RightParen -> 
+      begin match curr with
+        | RParOp -> None, t
+        | _ -> failwith @@ "parse error: expected right parenthesis but got " ^ a
+      end
+    | Term -> 
+    end
+    with End_of_file -> None end
+  | [] -> None 
+
 let () = 
   let test1 = ~%2L ** (Var "x") ++ ~%3L in
   let ctxt1 = (Ctxt.add Ctxt.empty "x" ~%3L) in
