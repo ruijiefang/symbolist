@@ -30,6 +30,8 @@ type exp =
   | Var of id
   | Bop of bop * exp * exp 
   | Uop of uop * exp 
+  | VarDecl of id * exp 
+  | Grad of id * exp 
 
 (* A context to store the variables. *)
 module Ctxt = struct
@@ -80,6 +82,7 @@ let string_of_uop = function
   | Sin  -> "sin"
   | Cos  -> "cos"
   | Tan  -> "tan"
+  | Grad -> "d/dx"
 
 (* string of an expression *)
 let rec string_of_exp : (exp -> string) = function 
@@ -87,7 +90,8 @@ let rec string_of_exp : (exp -> string) = function
   | Float f -> "Float" ^ (string_of_float f)
   | Var id -> "Var " ^ id
   | Bop (op, f, g) -> "(" ^ (string_of_bop op) ^ ", " ^ (string_of_exp f) ^ ", " ^ (string_of_exp g) ^ ")"
-  | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f)
+  | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f) ^ ")"
+  | VarDecl (id, expr) -> "(VarDecl " ^ id ^ ", " ^ (string_of_exp expr) ^ ")"
 
 (* grad: the symbolic differentiator. *)
 let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
@@ -112,20 +116,24 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
   | _ -> failwith "grad: Invalid type of expressions"
 
 (* evaluates an expression. *)
-let rec eval (ctxt : Ctxt.t) : (exp -> float) = function 
-  | Int i -> Int64.float_of_bits i
-  | Float f -> f
+let rec eval (ctxt : Ctxt.t) : (exp -> (Ctxt.t * float)) = function 
+  | Int i -> ctxt, Int64.float_of_bits i
+  | Float f -> ctxt, f
   | Var vid -> 
-    begin try eval ctxt (Ctxt.lookup ctxt vid)
+    begin try ctxt, eval ctxt (Ctxt.lookup ctxt vid)
     with Not_found -> failwith ("eval: Cannot evaluate an expression with unknown variable" ^ vid) end
   | Bop (op, f, g) ->
-    (begin match op with 
-     | Add -> Float.add | Sub -> Float.sub
+    ctxt, (begin match op with 
+     |  Add -> Float.add | Sub -> Float.sub
      | Mul -> Float.mul | Div -> Float.div end) (eval ctxt f) (eval ctxt g) 
   | Uop (op, f) -> 
-    (begin match op with 
-     | Sqrt -> sqrt | Log -> log | Exp -> exp
-     | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
+    ctxt, if op != Grad then 
+      (begin match op with 
+        | Sqrt -> sqrt | Log -> log | Exp -> exp
+        | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
+      else eval Grad  
+  | VarDecl (id, rhs) ->
+    let ctxt' = Ctxt.add ctxt (id, rhs) in ctxt', 0.0
 
 (* Utilities for parsing and lexing *)
 
@@ -149,7 +157,13 @@ let to_string = function
   | RParOp -> ")"
   | _ -> "<ident>" 
 
-(* Given a character string. Tokenizes it into object format. *)
+(* Given a character string. Tokenizes it into object format. 
+ * Caveats: 
+ *  The pattern-matching order of OCaml also dictates the
+ *  precedence when resolving syntax ambiguities: e.g. a variable
+ *  named "sqrt" will be parsed as a square root function, instead
+ *  of a variable ID. Hence, function names are not allowed as 
+ *  variable names. *)
 let of_string = function
   | "+" -> BinaryOp Add
   | "-" -> BinaryOp Sub
@@ -181,7 +195,19 @@ let of_string = function
    <id> = [a-zA-Z0-9]* 
    <op> = + | - | * | / | uop | <id> 
 *)
+
+(* The following functions define a recursive-descent
+ * parser for the above grammar. "parse_expr", "parse_op",
+ * "parse_exprs" functions correspond to the nonterminal
+ * rules specified above. Since the grammar is LL(1) and
+ * we permit 1-symbol 'lookaheads', there is no backtracking. *)
+
+(* a handy type decl to help working on lexed codestreams. *)
 type cstream = (term * string) list
+
+(* another handy decl for an ast node. 
+ * we convert from astnode representation into expr representation
+ * later, for sake of cleaniness and convenience. *)
 type astnode = Node of term * astnode list
 
 (* <op> = + | - | * | / | uop | <id> *)
@@ -224,14 +250,36 @@ and parse_exprs (l : cstream) : astnode list * cstream =
     expr_node :: exprs_node, exprs_stream 
   | [] -> [], l (* epsilon *)
 
+
 (* Lexing helpers. *)
 let tokenize (s : string) : string list = Str.split (Str.regexp "[ \t]+") s
 
 (* expr_of_ast constructs an expression out of a parsed expression in ast format. *)
-let expr_of_ast (t : ast) : expr = failwith "" (* TODO *) 
+let expr_of_ast (t : ast) : exp = 
+  let expect i l2 = if i <> List.length l2 then failwith "expect: error: operand length mismatch"
+  let op_term, list_of_operands = t in 
+    match op_term with 
+    | IntNode i -> expect 0 list_of_operands; Int i 
+    | FloatNode f -> expect 0 list_of_operands; Float f
+    | VarNode var_id -> expect 0 list_of_opearnds; Var var_id
+    | UnaryOp uop -> expect 1 list_of_operands; Uop (uop, expr_of_ast @@ List.ith list_of_operands 0)
+    | BinaryOp bop ->  expect 2 list_of_operands; 
+      let op1 = List.ith list_of_operands 0 in 
+      let op2 = List.ith list_of_operands 1 in 
+      Bop (bop, expr_of_ast op1, expr_of_ast op2)
+    | DeclOp -> expect 2 list_of_operands;
+      let var_name_t = List.ith list_of_operands 0 in 
+      let var_exp = List.ith list_of_operands 1 in 
+      begin match var_name_t with 
+        | (VarNode var_id, []) -> 
+          VarDecl (var_id, expr_of_ast var_exp)
+        | _ -> failwith @@ "expr_of_ast: error: expected variable id but got " ^ (to_string var_name_t)
+      end
+    | _ -> failwith @@ "expr_of_ast: error: unexpected token: " ^ (to_string op_term)
+
 
 (* parse: lexes and parses an input and returns an expr option type. *)
-let parse (input : string) : expr option = 
+let parse (input : string) : exp option = 
   let tokenized = tokenize input in 
   let lexed = List.map (fun x -> (of_string x), x) tokenized in 
   begin try 
@@ -241,6 +289,7 @@ let parse (input : string) : expr option =
       Printf.printf "parse: Parsing expression failed with error %s" e;
       None
   end
+
 
 (* main entry of the program. *)
 let () = 
