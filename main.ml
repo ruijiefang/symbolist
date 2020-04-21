@@ -132,6 +132,8 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
         | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
   | Grad (dx, f) -> eval ctxt @@ grad ctxt dx f
   | _ as other -> failwith @@ "eval: unexpected operator: " ^ (string_of_exp other)
+
+
 (* Utilities for parsing and lexing *)
 
 (* A token type. *)
@@ -286,18 +288,43 @@ let rec exp_of_astnode (t : astnode) : exp =
 
 
 (* parse: lexes and parses an input and returns an expr option type. *)
-(* TODO: Print-out of "failwith" messages. *)
 let parse (input : string) : exp option = 
   let tokenized = tokenize input in 
   let lexed = List.map (fun x -> (of_string x), x) tokenized in 
   begin try 
       let ast_root, _ = parse_expr lexed in 
       Some (exp_of_astnode ast_root)
-    with _ -> 
-      Printf.printf "parse: Parsing expression failed with error";
+    with Failure msg -> 
+      Printf.printf "parse: Parsing expression failed with error: %s\n" msg;
       None
   end
 
+
+
+(* A simple read-eval-print loop. *)
+let repl : unit =
+  let deref = (!) in 
+  let continue = ref true in 
+  let p_ctxt = ref Ctxt.empty in 
+  while deref continue do 
+    let input = read_line () in 
+    if input = ":q" then
+      continue := false
+    else
+      match parse input with 
+      | Some e -> 
+        begin match e with 
+        | VarDecl (id, expr) -> 
+          p_ctxt := Ctxt.add (deref p_ctxt) id expr
+        | _ as expr -> 
+          begin try 
+              Printf.printf "repl: result = %f\n" @@ eval (deref p_ctxt) expr 
+            with Failure msg -> 
+              Printf.printf "repl: eval error: %s\n" msg
+          end
+        end
+      | None -> ()
+  done
 
 (* main entry of the program. *)
 let () = 
