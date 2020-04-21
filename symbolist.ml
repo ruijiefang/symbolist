@@ -31,17 +31,6 @@ type exp =
   | Bop of bop * exp * exp 
   | Uop of uop * exp 
 
-(* A token type. *)
-type terminal = 
-  | IntNode of int64
-  | FloatNode of float
-  | VarNode of string
-  | UnaryOp of uop 
-  | BinaryOp of bop
-  | DeclOp
-  | LParOp
-  | RParOp
-
 (* A context to store the variables. *)
 module Ctxt = struct
   type t = (id * exp) list
@@ -137,19 +126,25 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
     (begin match op with 
      | Sqrt -> sqrt | Log -> log | Exp -> exp
      | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
-  | _ -> failwith "eval: unsupported type of expression."
 
-(* Parsing. Grammar for S-expressions:
- * S -> ( t S S ) *)
-(* a tokenizer. *)
+(* A token type. *)
+type term =
+  | IntNode of int64
+  | FloatNode of float
+  | VarNode of string
+  | UnaryOp of uop
+  | BinaryOp of bop
+  | DeclOp
+  | LParOp
+  | RParOp
 
-type parse_state = 
-  | LeftParen
-  | RightParen
-  | Term
-
-type ast = 
-  | Node of terminal * ast option * ast option
+let to_string = function
+  | BinaryOp bop -> string_of_bop bop
+  | UnaryOp uop -> string_of_uop uop
+  | DeclOp -> "Var"
+  | LParOp -> "("
+  | RParOp -> ")"
+  | _ -> "<ident>" 
 
 let of_string = function
   | "+" -> BinaryOp Add
@@ -176,42 +171,56 @@ let of_string = function
 
 let tokenize s = Str.split (Str.regexp "[ \t]+") s
 
-let rec parse (l : string list) (s : parse_state) : ast option * string list = 
+(* Parsing. LL(1) Grammar for S-expressions: *)
+(* S ::=  <expr>
+   <expr> ::= <id> 
+   <expr> ::= ( <op> <expr> <exprs> )
+   <exprs> ::= <expr> <exprs> | epsilon 
+   <id> = [a-zA-Z0-9]* 
+   <op> = + | - | * | / | uop | <id> 
+*)
+type cstream = (term * string) list
+type astnode = Node of term * astnode list
+
+(* <op> = + | - | * | / | uop | <id> *)
+let parse_op (l : cstream) : term * cstream = 
   match l with 
-  | a :: t -> 
-    begin try
-    let curr = string_of a in 
-    begin match s with 
-    | LeftParen -> 
-      begin match curr with 
-        | LParOp -> 
-          begin match parse t Term with 
-            | Some (t, None, None), nxt ->
-              begin match t with 
-                | BinaryOp _ -> 
-                  let lhs_ast_opt, lhs_nxt = parse nxt LParen in 
-                  let rhs_ast_opt, rhs_nxt = parse lhs_nxt LParen in
-                  let _, _ = parse rhs_nxt RParen in 
-                  Node (t, lhs_ast_opt, rhs_ast_op) 
-                | UnaryOp _ -> 
-                  let lhs_ast_opt, lhs_nxt = parse nxt LParen in 
-                  let _, _ = parse lhs_nxt RParen in 
-                  Node (t, lhs_ast_opt, None)
-                | DeclOp -> 
-              end
-            | Some _, _ | None, _ -> failwith @@ "parse error: No terminal after left paren at " ^ a 
-          end
-        | _ -> failwith @@ "parse error: expected left parenthesis but got " ^ a
-      end
-    | RightParen -> 
-      begin match curr with
-        | RParOp -> None, t
-        | _ -> failwith @@ "parse error: expected right parenthesis but got " ^ a
-      end
-    | Term -> 
+  | (a, s) :: t ->
+    begin match a with 
+      | BinaryOp _ | UnaryOp _ | DeclOp -> a, t
+      | _ -> failwith @@ "parse_op: operator expected but got " ^ s
     end
-    with End_of_file -> None end
-  | [] -> None 
+  | [] -> failwith "parse_op: operator expected but got none"
+
+(* <expr> ::= <id> | LParOp <op> <expr> <exprs> RParOp *)
+let rec parse_expr (l: cstream) : astnode * cstream = 
+  match l with 
+  | (a, s) :: t ->
+    begin match a with 
+      | IntNode v -> Node (a, []), t
+      | FloatNode v -> Node (a, []), t
+      | VarNode v -> Node (a, []), t
+      | LParOp ->  
+        let op_node, op_stream = parse_op t in 
+        let expr_node, expr_stream = parse_expr op_stream in 
+        let exprs_node, exprs_stream = parse_exprs expr_stream in 
+        begin match exprs_stream with 
+          | (a1, s1) :: t1 -> 
+            if a1 = RParOp then (Node (op_node, expr_node :: exprs_node)), t1
+            else failwith @@ "parse_expr: illegal token: ')' expected but got " ^ s1
+          | [] -> failwith @@ "parse_expr: unclosed parenthesis: ')' expected but got " ^ s
+        end
+      | _ -> failwith @@ "parse_expr: <expr> encountered: "^s
+    end
+  | [] -> failwith "parse_expr: <expr> is not nullable but encountered null input"
+and parse_exprs (l : cstream) : astnode list * cstream = 
+  (* <exprs> ::= <expr> <exprs> | epsilon *)
+  match l with 
+  | (a, s) :: t ->
+    let expr_node, expr_stream = parse_expr t in 
+    let exprs_node, exprs_stream = parse_exprs expr_stream in 
+    expr_node :: exprs_node, exprs_stream 
+  | [] -> [], l (* epsilon *)
 
 let () = 
   let test1 = ~%2L ** (Var "x") ++ ~%3L in
