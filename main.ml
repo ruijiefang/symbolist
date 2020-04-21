@@ -2,8 +2,6 @@
 (* Author: Ruijie Fang *)
 (* Version v0.1a *)
 
-open Printf
-
 (* A variable name instance *)
 type id = string
 
