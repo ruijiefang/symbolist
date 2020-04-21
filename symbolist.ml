@@ -7,7 +7,7 @@ open Printf
 (* A variable name instance *)
 type id = string
 
-(* An expression type. *)
+(* binary operators. *)
 type bop =
   | Add 
   | Sub
@@ -23,7 +23,7 @@ type uop =
   | Cos
   | Tan
 
-(* Binary operators. *)
+(* An expression type. *)
 type exp =
   | Int of int64
   | Float of float 
