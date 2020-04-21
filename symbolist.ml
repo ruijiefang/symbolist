@@ -127,6 +127,8 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
      | Sqrt -> sqrt | Log -> log | Exp -> exp
      | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
 
+(* Utilities for parsing and lexing *)
+
 (* A token type. *)
 type term =
   | IntNode of int64
@@ -138,6 +140,7 @@ type term =
   | LParOp
   | RParOp
 
+(* Prettyprint codestream objects. *)
 let to_string = function
   | BinaryOp bop -> string_of_bop bop
   | UnaryOp uop -> string_of_uop uop
@@ -146,6 +149,7 @@ let to_string = function
   | RParOp -> ")"
   | _ -> "<ident>" 
 
+(* Given a character string. Tokenizes it into object format. *)
 let of_string = function
   | "+" -> BinaryOp Add
   | "-" -> BinaryOp Sub
@@ -168,8 +172,6 @@ let of_string = function
           with Failure _ -> VarNode s
         end
     end
-
-let tokenize s = Str.split (Str.regexp "[ \t]+") s
 
 (* Parsing. LL(1) Grammar for S-expressions: *)
 (* S ::=  <expr>
@@ -222,6 +224,25 @@ and parse_exprs (l : cstream) : astnode list * cstream =
     expr_node :: exprs_node, exprs_stream 
   | [] -> [], l (* epsilon *)
 
+(* Lexing helpers. *)
+let tokenize (s : string) : string list = Str.split (Str.regexp "[ \t]+") s
+
+(* expr_of_ast constructs an expression out of a parsed expression in ast format. *)
+let expr_of_ast (t : ast) : expr = failwith "" (* TODO *) 
+
+(* parse: lexes and parses an input and returns an expr option type. *)
+let parse (input : string) : expr option = 
+  let tokenized = tokenize input in 
+  let lexed = List.map (fun x -> (of_string x), x) tokenized in 
+  begin try 
+      let ast_root, _ = parse_expr lexed in 
+      Some (expr_of_ast ast_root)
+    with Error e -> 
+      Printf.printf "parse: Parsing expression failed with error %s" e;
+      None
+  end
+
+(* main entry of the program. *)
 let () = 
   let test1 = ~%2L ** (Var "x") ++ ~%3L in
   let ctxt1 = (Ctxt.add Ctxt.empty "x" ~%3L) in
