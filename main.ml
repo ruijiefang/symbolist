@@ -68,6 +68,7 @@ let simplify_frac : (exp -> exp) =
     | Int i -> Some i
     | _ -> None
   in let rec gcd_poly : (exp -> int64) = function
+    | Int i -> i
     | Bop (Mul, f, g) -> 
       begin match const f with 
         | Some i ->
@@ -84,6 +85,8 @@ let simplify_frac : (exp -> exp) =
     | Bop (Add, f, g) -> gcd (gcd_poly f) (gcd_poly g)
     | _ -> 1L
   in let rec perform_div c : (exp -> exp) = function 
+    | Int i ->
+      let q = gcd c i in ~%(Int64.div i q)
     | Bop (Mul, f, g) -> 
       begin match const f with 
         | Some i -> 
@@ -290,7 +293,7 @@ let parse_op (l : cstream) : term * cstream =
   | (a, s) :: t ->
     if debug then Printf.printf "parse_op: %s\n" s ;
     begin match a with 
-      | BinaryOp _ | UnaryOp _ | DeclOp | GradOp -> a, t
+      | BinaryOp _ | UnaryOp _ | DeclOp | GradOp | SimplifyOp -> a, t
       | _ -> failwith @@ "parse_op: operator expected but got " ^ s
     end
   | [] -> failwith "parse_op: operator expected but got none"
@@ -307,7 +310,7 @@ let rec parse_expr (l: cstream) : astnode * cstream =
       | LParOp ->  
         let op_node, op_stream = parse_op t in 
         begin match op_node with 
-          | BinaryOp _ | UnaryOp _ | DeclOp | GradOp -> 
+          | BinaryOp _ | UnaryOp _ | DeclOp | GradOp | SimplifyOp -> 
             let expr_node, expr_stream = parse_expr op_stream in 
             let exprs_node, exprs_stream = parse_exprs expr_stream in 
             begin match exprs_stream with 
@@ -416,6 +419,8 @@ let repl () : unit =
         | Grad (id, expr) ->
           let ddx = grad (deref p_ctxt) id expr in 
           Printf.printf "repl: grad = %s\n" (string_of_exp ddx)
+        | Simplify expr -> 
+          Printf.printf "repl: simplify = %s\n" (string_of_exp (simplify_frac expr))
         | _ as expr -> 
           begin try 
               Printf.printf "repl: result = %f\n" @@ eval (deref p_ctxt) expr 
