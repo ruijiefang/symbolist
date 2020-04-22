@@ -42,17 +42,6 @@ module Ctxt = struct
   let empty = []
 end
 
-(* A helper to simplify fractions. *)
-(* TODO: Needs more work. Idea: Grab gcd of all coefficients
- * from polynomial-representation of top, btm recursively and
- * implement simplification of coefficients in these polynomials.*)
-let simplify_frac = 
-  let rec gcd u v = if v = 0L then u else gcd v (Int64.rem u v) in 
-  function 
-  | Bop (Div, Int u, Int v) -> let b = gcd u v in 
-    Bop (Div, Int (Int64.div u b), Int (Int64.div v b)) 
-  | _ -> failwith "simplify_frac: Cannot simplify complicated fractions or non-fractions!"
-
 (* A helper to make constants. *)
 let ( ~% ) c = Int c
 
@@ -60,13 +49,69 @@ let ( ~% ) c = Int c
 let ( // ) top btm = (Bop (Div, top, btm))
 
 (* A helper to define addition expressions. *)
-let ( ++ ) a b = (Bop (Add, a, b))
+let ( ++ ) a b = (Bop (Add, a, b)) 
 
 (* A helper to define subtraction expressions. *)
-let ( -- ) a b = (Bop (Sub, a, b))
+let ( -- ) a b = (Bop (Sub, a, b)) 
 
 (* A helper to define multiplication expressions. *)
-let ( ** ) a b = (Bop (Mul, a, b))
+let ( ** ) a b = (Bop (Mul, a, b)) 
+
+(* A helper to simplify fractions. *)
+(* TODO: Needs more work. Idea: Grab gcd of all coefficients
+ * from polynomial-representation of top, btm recursively and
+ * implement simplification of coefficients in these polynomials.*)
+let simplify_frac = 
+  let rec gcd u v = if v = 0L then u else gcd v (Int64.rem u v) in
+  let const : (exp -> int64 option) = function 
+    | Int i -> Some i
+    | _ -> None
+  in let rec gcd_poly : (exp -> int64) = function
+    | Bop (Mul, f, g) -> 
+      begin match const f with 
+        | Some i ->
+          begin match const g with 
+            | Some j -> Int64.mul i j 
+            | None -> Int64.mul i (gcd_poly g)
+          end
+        | None -> 
+          begin match const g with 
+            | Some i -> Int64.mul i (gcd_poly f)
+            | None -> 1L
+          end
+      end
+    | Bop (Add, f, g) -> gcd (gcd_poly f) (gcd_poly g)
+    | _ -> 1L
+  in let rec perform_div c : (exp -> exp) = function 
+    | Bop (Mul, f, g) -> 
+      begin match const f with 
+        | Some i -> 
+          begin match const g with 
+            | Some j -> 
+              let p = Int64.mul i j in
+              let q = gcd p c in 
+              ~%(Int64.div p q)
+            | None -> 
+              let q = gcd c i in 
+              ~%(Int64.div i q) ** (perform_div (Int64.div c q) g)
+          end
+        | None -> 
+          begin match const g with 
+            | Some i ->
+              let q = gcd c i in ~%(Int64.div i q) ** (perform_div (Int64.div c q) f)
+            | None -> f ** g
+          end
+      end
+    | Bop (Add, f, g) -> (perform_div c f) ++ (perform_div c g)
+    | _ as other -> other 
+  in function 
+  | Bop (Div, top, btm) -> 
+    let top_coeff = gcd_poly top in 
+    let btm_coeff = gcd_poly btm in 
+    let gcd_topbtm = gcd top_coeff btm_coeff in 
+    (perform_div gcd_topbtm top) // (perform_div gcd_topbtm btm)
+  | _ -> failwith "simplify_frac: Cannot simplify complicated fractions or non-fractions!"
+
 
 (* string of a binary operator. *)
 let string_of_bop = function 
@@ -103,7 +148,8 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
       | Add -> (grad ctxt dx f) ++ (grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
       | Sub -> (grad ctxt dx f) -- (grad ctxt dx g) (* d/dx[f - g] = d/dx[f] = d/dx[g] *)
       | Mul -> ((grad ctxt dx f) ** (eval_grad ctxt g)) ++ ((eval_grad ctxt f) ** (grad ctxt dx g)) (* d/dx (f * g) = (d/dx f) * g + f * (d/dx g) *)
-      | Div -> (((eval_grad ctxt g) ** grad ctxt dx f) -- ((eval_grad ctxt f) ** grad ctxt dx g)) // ((eval_grad ctxt g) ** (eval_grad ctxt g)) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
+      | Div -> (((eval_grad ctxt g) ** grad ctxt dx f) -- ((eval_grad ctxt f) ** grad ctxt dx g))
+               // ((eval_grad ctxt g) ** (eval_grad ctxt g)) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
     end
   | Uop (op, f) -> 
     begin match op with 
