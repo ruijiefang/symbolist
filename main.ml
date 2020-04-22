@@ -33,6 +33,7 @@ type exp =
   | Uop of uop * exp 
   | VarDecl of id * exp 
   | Grad of id * exp 
+  | Simplify of exp 
 
 (* A context to store the variables. *)
 module Ctxt = struct
@@ -58,10 +59,10 @@ let ( -- ) a b = (Bop (Sub, a, b))
 let ( ** ) a b = (Bop (Mul, a, b)) 
 
 (* A helper to simplify fractions. *)
-(* TODO: Needs more work. Idea: Grab gcd of all coefficients
+(* Grabs gcd of all coefficients
  * from polynomial-representation of top, btm recursively and
  * implement simplification of coefficients in these polynomials.*)
-let simplify_frac = 
+let simplify_frac : (exp -> exp) = 
   let rec gcd u v = if v = 0L then u else gcd v (Int64.rem u v) in
   let const : (exp -> int64 option) = function 
     | Int i -> Some i
@@ -138,7 +139,7 @@ let rec string_of_exp : (exp -> string) = function
   | Uop (op, f) -> "(" ^ (string_of_uop op) ^ ", " ^ (string_of_exp f) ^ ")"
   | VarDecl (id, expr) -> "(VarDecl " ^ id ^ ", " ^ (string_of_exp expr) ^ ")"
   | Grad (id, expr) -> "(d/d" ^ id ^ " " ^ (string_of_exp expr) ^ ")"
-
+  | Simplify expr -> "(simplify " ^ (string_of_exp expr) ^ ")"
 (* grad: the symbolic differentiator. *)
 let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
   | Int i -> ~%0L (* d/dx [c] = 0 *)
@@ -187,6 +188,8 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
         | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
   | Grad (dx, f) -> 
     eval ctxt @@ grad ctxt dx f
+  | Simplify expr -> 
+    eval ctxt (simplify_frac expr)
   | _ as other -> failwith @@ "eval: unexpected operator: " ^ (string_of_exp other)
 
 
@@ -201,6 +204,7 @@ type term =
   | BinaryOp of bop
   | GradOp
   | DeclOp
+  | SimplifyOp
   | LParOp
   | RParOp
 
@@ -210,6 +214,7 @@ let to_string = function
   | UnaryOp uop -> string_of_uop uop
   | DeclOp -> "var"
   | GradOp -> "grad"
+  | SimplifyOp -> "simplify"
   | LParOp -> "("
   | RParOp -> ")"
   | IntNode i -> "IntNode " ^ (Int64.to_string i)
@@ -235,6 +240,7 @@ let of_string = function
   | "tan" -> UnaryOp Tan
   | "Var" -> DeclOp
   | "grad" -> GradOp
+  | "simplify" -> SimplifyOp
   | "("   -> LParOp
   | ")"   -> RParOp 
   | s -> 
@@ -359,6 +365,9 @@ let rec exp_of_astnode (t : astnode) : exp =
           else (* GradOp *) Grad (var_id, exp_of_astnode var_exp)
         | _ as other -> failwith @@ "exp_of_astnode: error: expected variable id but got " ^ (string_of_astnode other)
       end
+    | SimplifyOp -> 
+      expect 1 list_of_operands;
+      let expr = List.nth list_of_operands 0 in (Simplify (exp_of_astnode expr))
     | _ -> failwith @@ "exp_of_astnode: error: unexpected token: " ^ (to_string op_term)
     end
   | Empty -> failwith "exp_of_astnode: got empty astnode"
