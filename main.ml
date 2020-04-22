@@ -339,7 +339,7 @@ let parse (input : string) : exp option =
 
 
 (* A simple read-eval-print loop. *)
-let repl : unit =
+let repl () : unit =
   let deref = (!) in 
   let continue = ref true in 
   let p_ctxt = ref Ctxt.empty in 
@@ -379,6 +379,6 @@ let test =
   Printf.printf "d/dx := %s\n" @@ string_of_exp ddx_test1 *)
 
 (* Main entry point of the program. *)
-let () = repl
+let () = repl ()
 
 
