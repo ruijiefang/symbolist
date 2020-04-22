@@ -117,7 +117,7 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
 
 (* evaluates an expression. *)
 let rec eval (ctxt : Ctxt.t) : (exp -> float) = function 
-  | Int i -> Int64.float_of_bits i
+  | Int i -> Int64.to_float i
   | Float f -> f
   | Var vid -> 
     begin try eval ctxt (Ctxt.lookup ctxt vid)
@@ -156,7 +156,9 @@ let to_string = function
   | GradOp -> "grad"
   | LParOp -> "("
   | RParOp -> ")"
-  | _ -> "<ident>" 
+  | IntNode i -> "IntNode " ^ (Int64.to_string i)
+  | FloatNode f -> "FloatNode " ^ (Float.to_string f)
+  | VarNode str -> "VarNode " ^ str
 
 (* Given a character string. Tokenizes it into object format. 
  * Caveats: 
@@ -210,17 +212,21 @@ type cstream = (term * string) list
 (* another handy decl for an ast node. 
  * we convert from astnode representation into expr representation
  * later, for sake of cleaniness and convenience. *)
-type astnode = Node of term * astnode list
+type astnode = 
+  | Node of term * astnode list
+  | Empty
 
 let rec string_of_astnode = function 
   | Node (t, l) -> 
     let ch_str = List.fold_left (fun s n -> " " ^ (string_of_astnode n)) "" l in
     "(Node " ^ (to_string t) ^ ", [" ^ ch_str ^ " ])"
+  | Empty -> ""
 
 (* <op> = + | - | * | / | uop | <id> *)
 let parse_op (l : cstream) : term * cstream = 
   match l with 
   | (a, s) :: t ->
+    Printf.printf "parse_op: %s\n" s ;
     begin match a with 
       | BinaryOp _ | UnaryOp _ | DeclOp | GradOp -> a, t
       | _ -> failwith @@ "parse_op: operator expected but got " ^ s
@@ -231,30 +237,42 @@ let parse_op (l : cstream) : term * cstream =
 let rec parse_expr (l: cstream) : astnode * cstream = 
   match l with 
   | (a, s) :: t ->
+    Printf.printf "parse_expr: %s\n" s ; 
     begin match a with 
       | IntNode v -> Node (a, []), t
       | FloatNode v -> Node (a, []), t
       | VarNode v -> Node (a, []), t
       | LParOp ->  
         let op_node, op_stream = parse_op t in 
-        let expr_node, expr_stream = parse_expr op_stream in 
-        let exprs_node, exprs_stream = parse_exprs expr_stream in 
-        begin match exprs_stream with 
-          | (a1, s1) :: t1 -> 
-            if a1 = RParOp then (Node (op_node, expr_node :: exprs_node)), t1
-            else failwith @@ "parse_expr: illegal token: ')' expected but got " ^ s1
-          | [] -> failwith @@ "parse_expr: unclosed parenthesis: ')' expected but got " ^ s
+        begin match op_node with 
+          | BinaryOp _ | UnaryOp _ | DeclOp | GradOp -> 
+            let expr_node, expr_stream = parse_expr op_stream in 
+            let exprs_node, exprs_stream = parse_exprs expr_stream in 
+            begin match exprs_stream with 
+              | (a1, s1) :: t1 -> 
+                if a1 = RParOp then (Node (op_node, expr_node :: exprs_node)), t1
+                else failwith @@ "parse_expr: illegal token: ')' expected but got " ^ s1
+              | [] -> failwith @@ "parse_expr: unclosed parenthesis: ')' expected but got " ^ s
+            end
+          | _ -> failwith @@ "parse_expr: unexpected operator after '(': " ^ s
         end
+      | RParOp -> (* 1-symbol lookahead, defer symbol evaluation to ancestors of recursion tree. *)
+        Empty, l
       | _ -> failwith @@ "parse_expr: <expr> encountered: "^s
     end
-  | [] -> failwith "parse_expr: <expr> is not nullable but encountered null input"
+  | [] -> Empty, l
 and parse_exprs (l : cstream) : astnode list * cstream = 
   (* <exprs> ::= <expr> <exprs> | epsilon *)
   match l with 
   | (a, s) :: t ->
-    let expr_node, expr_stream = parse_expr t in 
-    let exprs_node, exprs_stream = parse_exprs expr_stream in 
-    expr_node :: exprs_node, exprs_stream 
+    Printf.printf "parse_exprs: %s\n" s ;
+    begin match a with 
+      | RParOp -> [], l
+      | _ -> 
+        let expr_node, expr_stream = parse_expr l in 
+        let exprs_node, exprs_stream = parse_exprs expr_stream in 
+          (if expr_node = Empty then exprs_node else expr_node :: exprs_node), exprs_stream 
+    end
   | [] -> [], l (* epsilon *)
 
 
@@ -263,9 +281,10 @@ let tokenize (s : string) : string list = Str.split (Str.regexp "[ \t]+") s
 
 (* exp_of_astnode constructs an expression out of a parsed expression in ast format. *)
 let rec exp_of_astnode (t : astnode) : exp = 
-  let expect i l2 = if i <> List.length l2 then failwith "expect: error: operand length mismatch" in 
-  let Node (op_term, list_of_operands) = t in 
-    match op_term with 
+  let expect i l2 = if i <> List.length l2 then failwith @@ "expect: error: operand length mismatch: list is" ^ (string_of_astnode t) in 
+  match t with 
+  | Node (op_term, list_of_operands) -> 
+    begin match op_term with 
     | IntNode i -> expect 0 list_of_operands; Int i 
     | FloatNode f -> expect 0 list_of_operands; Float f
     | VarNode var_id -> expect 0 list_of_operands; Var var_id
@@ -285,15 +304,21 @@ let rec exp_of_astnode (t : astnode) : exp =
         | _ as other -> failwith @@ "exp_of_astnode: error: expected variable id but got " ^ (string_of_astnode other)
       end
     | _ -> failwith @@ "exp_of_astnode: error: unexpected token: " ^ (to_string op_term)
-
+    end
+  | Empty -> failwith "exp_of_astnode: got empty astnode"
 
 (* parse: lexes and parses an input and returns an expr option type. *)
 let parse (input : string) : exp option = 
-  let tokenized = tokenize input in 
+  Printf.printf "parse: input = %s\n" input ; 
+  let tokenized = tokenize input in
+  Printf.printf "tokenized output: [" ; 
+  List.iter (fun x -> Printf.printf "> %s\n" x) tokenized ; 
+  Printf.printf "]\n" ;
   let lexed = List.map (fun x -> (of_string x), x) tokenized in 
   begin try 
-      let ast_root, _ = parse_expr lexed in 
-      Some (exp_of_astnode ast_root)
+      let ast_root, l = parse_expr lexed in 
+      if List.length l <> 0 then failwith "Illegal input expression"
+      else Some (exp_of_astnode ast_root)
     with Failure msg -> 
       Printf.printf "parse: Parsing expression failed with error: %s\n" msg;
       None
@@ -307,12 +332,15 @@ let repl : unit =
   let continue = ref true in 
   let p_ctxt = ref Ctxt.empty in 
   while deref continue do 
+    Printf.printf "=: ";
     let input = read_line () in 
+    Printf.printf "input string: %s\n" input ;
     if input = ":q" then
       continue := false
     else
       match parse input with 
       | Some e -> 
+        Printf.printf "parsed expression: %s\n" (string_of_exp e) ;
         begin match e with 
         | VarDecl (id, expr) -> 
           p_ctxt := Ctxt.add (deref p_ctxt) id expr
@@ -326,11 +354,15 @@ let repl : unit =
       | None -> ()
   done
 
-(* main entry of the program. *)
-let () = 
+(* Legacy: tests
+let test = 
   let test1 = ~%2L ** (Var "x") ++ ~%3L in
   let ctxt1 = (Ctxt.add Ctxt.empty "x" ~%3L) in
   let ddx_test1 = grad ctxt1 "x" test1 in 
   Printf.printf "expr := %s\n" @@ string_of_exp test1;
-  Printf.printf "d/dx := %s\n" @@ string_of_exp ddx_test1
+  Printf.printf "d/dx := %s\n" @@ string_of_exp ddx_test1 *)
+
+(* Main entry point of the program. *)
+let () = repl
+
 
