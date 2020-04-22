@@ -102,26 +102,27 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
     begin match op with 
       | Add -> (grad ctxt dx f) ++ (grad ctxt dx g) (* d/dx[f + g] = d/dx[f] + d/dx[g] *)
       | Sub -> (grad ctxt dx f) -- (grad ctxt dx g) (* d/dx[f - g] = d/dx[f] = d/dx[g] *)
-      | Mul -> ((grad ctxt dx f) ** g) ++ (f ** (grad ctxt dx g)) (* d/dx (f * g) = (d/dx f) * g + f * (d/dx g) *)
-      | Div -> ((g ** grad ctxt dx f) -- (f ** grad ctxt dx g)) // (g ** g) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
+      | Mul -> ((grad ctxt dx f) ** (eval_grad ctxt g)) ++ ((eval_grad ctxt f) ** (grad ctxt dx g)) (* d/dx (f * g) = (d/dx f) * g + f * (d/dx g) *)
+      | Div -> (((eval_grad ctxt g) ** grad ctxt dx f) -- ((eval_grad ctxt f) ** grad ctxt dx g)) // ((eval_grad ctxt g) ** (eval_grad ctxt g)) (* d/dx[f/g] = (g*d/dx[f] - f*d/dx[g]) / (g*g) *)
     end
   | Uop (op, f) -> 
     begin match op with 
-      | Sqrt -> (~%1L // ~%2L) ** (grad ctxt dx f) // (Uop (Sqrt, f)) (* d/dx[sqrt(f)] = 1/2 * d/dx[f] / sqrt[f] *)
-      | Log -> (grad ctxt dx f) // f (* d/dx[log(f)] = 1/f * d/dx[f] *)
-      | Exp -> (Uop (Exp, f)) ** (grad ctxt dx f) (* d/dx[exp(f)] = exp(f) * d/dx[f] *)
-      | Sin -> (Uop (Cos, f)) ** (grad ctxt dx f) (* d/dx[sin(f)] = cos(f) * d/dx[f] *)
-      | Cos -> (~%0L -- (Uop (Sin, f))) ** (grad ctxt dx f) (* d/dx[cos(f)] = -sin(f) * d/dx[f] *) 
-      | Tan -> (~%1L ++ ((Uop (Tan, f)) ** (Uop (Tan, f)))) ** grad ctxt dx f (* d/dx[tan(f)] = (1 + tan(f)*tan(f)) * d/dx[f] *)
+      | Sqrt -> (~%1L // ~%2L) ** (grad ctxt dx f) // (Uop (Sqrt, eval_grad ctxt f)) (* d/dx[sqrt(f)] = 1/2 * d/dx[f] / sqrt[f] *)
+      | Log -> (grad ctxt dx f) // (eval_grad ctxt f) (* d/dx[log(f)] = 1/f * d/dx[f] *)
+      | Exp -> (Uop (Exp, (eval_grad ctxt f))) ** (grad ctxt dx f) (* d/dx[exp(f)] = exp(f) * d/dx[f] *)
+      | Sin -> (Uop (Cos, (eval_grad ctxt f))) ** (grad ctxt dx f) (* d/dx[sin(f)] = cos(f) * d/dx[f] *)
+      | Cos -> (~%0L -- (Uop (Sin, eval_grad ctxt f))) ** (grad ctxt dx f) (* d/dx[cos(f)] = -sin(f) * d/dx[f] *) 
+      | Tan -> (~%1L ++ ((Uop (Tan, eval_grad ctxt f)) ** (Uop (Tan, eval_grad ctxt f)))) ** grad ctxt dx f (* d/dx[tan(f)] = (1 + tan(f)*tan(f)) * d/dx[f] *)
     end
   | Grad (dy, f) -> 
-    Printf.printf "grad of grad: dy=%s, f = %s\n" dy (string_of_exp f); 
     let ddy = grad ctxt dy f in 
-    Printf.printf "df/dy = %s\n" (string_of_exp ddy) ; 
-    let ddx = grad ctxt dx ddy (* [d/dx dy] f = d/dx[ d/dy f ] *) in 
-    Printf.printf "d/dx df/dy = %s\n" (string_of_exp ddx) ; 
-    ddx
+    let ddx = grad ctxt dx ddy (* [d/dx dy] f = d/dx[ d/dy f ] *) in ddx
   | _ -> failwith "grad: Invalid type of expressions"
+and eval_grad (ctxt : Ctxt.t) : (exp -> exp) = function
+  | Bop (op, f, g) -> Bop (op, eval_grad ctxt  f, eval_grad ctxt  g)
+  | Uop (op, f) -> Uop (op, eval_grad ctxt  f)
+  | Grad (dy, f) -> grad ctxt dy f 
+  | _ as other -> other 
 
 (* evaluates an expression. *)
 let rec eval (ctxt : Ctxt.t) : (exp -> float) = function 
