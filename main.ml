@@ -2,6 +2,9 @@
 (* Author: Ruijie Fang *)
 (* Version v0.1a *)
 
+(* debug flag *)
+let debug = false
+
 (* A variable name instance *)
 type id = string
 
@@ -112,7 +115,12 @@ let rec grad (ctxt : Ctxt.t) (dx : id) : (exp -> exp) = function
       | Tan -> (~%1L ++ ((Uop (Tan, f)) ** (Uop (Tan, f)))) ** grad ctxt dx f (* d/dx[tan(f)] = (1 + tan(f)*tan(f)) * d/dx[f] *)
     end
   | Grad (dy, f) -> 
-    grad ctxt dx (grad ctxt dy f) (* [d/dx dy] f = d/dx[ d/dy f ] *)
+    Printf.printf "grad of grad: dy=%s, f = %s\n" dy (string_of_exp f); 
+    let ddy = grad ctxt dy f in 
+    Printf.printf "df/dy = %s\n" (string_of_exp ddy) ; 
+    let ddx = grad ctxt dx ddy (* [d/dx dy] f = d/dx[ d/dy f ] *) in 
+    Printf.printf "d/dx df/dy = %s\n" (string_of_exp ddx) ; 
+    ddx
   | _ -> failwith "grad: Invalid type of expressions"
 
 (* evaluates an expression. *)
@@ -130,7 +138,8 @@ let rec eval (ctxt : Ctxt.t) : (exp -> float) = function
     (begin match op with 
         | Sqrt -> sqrt | Log -> log | Exp -> exp
         | Sin -> sin   | Cos -> cos | Tan -> tan end) (eval ctxt f)
-  | Grad (dx, f) -> eval ctxt @@ grad ctxt dx f
+  | Grad (dx, f) -> 
+    eval ctxt @@ grad ctxt dx f
   | _ as other -> failwith @@ "eval: unexpected operator: " ^ (string_of_exp other)
 
 
@@ -226,7 +235,7 @@ let rec string_of_astnode = function
 let parse_op (l : cstream) : term * cstream = 
   match l with 
   | (a, s) :: t ->
-    Printf.printf "parse_op: %s\n" s ;
+    if debug then Printf.printf "parse_op: %s\n" s ;
     begin match a with 
       | BinaryOp _ | UnaryOp _ | DeclOp | GradOp -> a, t
       | _ -> failwith @@ "parse_op: operator expected but got " ^ s
@@ -237,7 +246,7 @@ let parse_op (l : cstream) : term * cstream =
 let rec parse_expr (l: cstream) : astnode * cstream = 
   match l with 
   | (a, s) :: t ->
-    Printf.printf "parse_expr: %s\n" s ; 
+    if debug then Printf.printf "parse_expr: %s\n" s ; 
     begin match a with 
       | IntNode v -> Node (a, []), t
       | FloatNode v -> Node (a, []), t
@@ -265,7 +274,7 @@ and parse_exprs (l : cstream) : astnode list * cstream =
   (* <exprs> ::= <expr> <exprs> | epsilon *)
   match l with 
   | (a, s) :: t ->
-    Printf.printf "parse_exprs: %s\n" s ;
+    if debug then Printf.printf "parse_exprs: %s\n" s ;
     begin match a with 
       | RParOp -> [], l
       | _ -> 
@@ -309,11 +318,14 @@ let rec exp_of_astnode (t : astnode) : exp =
 
 (* parse: lexes and parses an input and returns an expr option type. *)
 let parse (input : string) : exp option = 
-  Printf.printf "parse: input = %s\n" input ; 
+  if debug then Printf.printf "parse: input = %s\n" input ; 
   let tokenized = tokenize input in
-  Printf.printf "tokenized output: [" ; 
-  List.iter (fun x -> Printf.printf "> %s\n" x) tokenized ; 
-  Printf.printf "]\n" ;
+  if debug then 
+    begin 
+      Printf.printf "tokenized output: [" ; 
+      List.iter (fun x -> Printf.printf "> %s\n" x) tokenized ; 
+      Printf.printf "]\n" 
+    end ; 
   let lexed = List.map (fun x -> (of_string x), x) tokenized in 
   begin try 
       let ast_root, l = parse_expr lexed in 
@@ -335,17 +347,19 @@ let repl : unit =
     Printf.printf "=: ";
     let input = read_line () in 
     Printf.printf "input string: %s\n" input ;
-    if input = ":q" then
+    if input = ":q" || input = "exit" || input = "quit" || input = "q" then
       continue := false
     else
       match parse input with 
       | Some e -> 
         Printf.printf "parsed expression: %s\n" (string_of_exp e) ;
         begin match e with 
-        | VarDecl (id, expr) -> 
+        | VarDecl (id, expr) ->
+          Printf.printf "repl: adding variable %s to context.\n" id ; 
           p_ctxt := Ctxt.add (deref p_ctxt) id expr
         | Grad (id, expr) ->
-          Printf.printf "d/d%s = %s\n" id @@ string_of_exp (grad (deref p_ctxt) id expr)
+          let ddx = grad (deref p_ctxt) id expr in 
+          Printf.printf "repl: grad = %s\n" (string_of_exp ddx)
         | _ as expr -> 
           begin try 
               Printf.printf "repl: result = %f\n" @@ eval (deref p_ctxt) expr 
