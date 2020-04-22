@@ -344,6 +344,8 @@ let repl : unit =
         begin match e with 
         | VarDecl (id, expr) -> 
           p_ctxt := Ctxt.add (deref p_ctxt) id expr
+        | Grad (id, expr) ->
+          Printf.printf "d/d%s = %s\n" id @@ string_of_exp (grad (deref p_ctxt) id expr)
         | _ as expr -> 
           begin try 
               Printf.printf "repl: result = %f\n" @@ eval (deref p_ctxt) expr 
